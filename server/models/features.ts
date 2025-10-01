@@ -2,6 +2,7 @@ import { and, desc, eq, gte, lt, lte, or } from "drizzle-orm";
 import { differenceInHours } from "date-fns";
 import { fixtures, odds, weather as weatherTable } from "@shared/schema";
 import { db } from "../db";
+import { fixtureLogger } from "../logging";
 
 export const FEATURE_KEYS = [
   "homeFormRating",
@@ -457,6 +458,12 @@ export async function computeFixtureFeatureVectorFromRecord(
 
   const impliedOdds = selectLatestMarketOdds(fixture);
 
+  fixtureLogger(fixture.id, "features").debug("Feature vector computed", {
+    impliedEdge: featureVector.impliedEdge,
+    weatherSeverity: featureVector.weatherSeverity,
+    restDiff: featureVector.restDiff,
+  });
+
   return {
     fixtureId: fixture.id,
     kickoffAt: kickoffAt.toISOString(),
@@ -540,3 +547,14 @@ export async function buildTrainingDataset(options: {
 
   return { rows: dataset, featureOrder: FEATURE_KEYS.slice() };
 }
+
+export const __testing = {
+  computeFormRating,
+  computeElo,
+  computeRestDays,
+  computeFatigueIndex,
+  computeImpliedProbability,
+  computeWeatherSeverity,
+  computeResult,
+  vectorToArray,
+};

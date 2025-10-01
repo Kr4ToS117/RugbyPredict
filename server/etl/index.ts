@@ -3,6 +3,7 @@ import { etlJobRuns } from "@shared/schema";
 import type { NotificationDispatcher } from "../notifications";
 import type { Database, ETLConnector } from "./types";
 import { countHighSeverity, recordAnomalies } from "./utils";
+import { createTraceLogger, fixtureLogger } from "../logging";
 import { rugbyApiConnector } from "./connectors/rugbyApi";
 import { oddsApiConnector } from "./connectors/oddsApi";
 import { weatherApiConnector } from "./connectors/weatherApi";
@@ -32,6 +33,8 @@ interface RunConnectorOptions {
 
 export async function runConnector({ jobName, connector, db, notifier }: RunConnectorOptions) {
   const startTime = Date.now();
+  const span = createTraceLogger("etl", {});
+  span.info("Connector run started", { connector: connector.id, jobName });
   const [run] = await db
     .insert(etlJobRuns)
     .values({
@@ -47,6 +50,30 @@ export async function runConnector({ jobName, connector, db, notifier }: RunConn
     const duration = Date.now() - startTime;
 
     await recordAnomalies(db, result.anomalies);
+
+    span.info("Connector completed", {
+      connector: connector.id,
+      jobName,
+      durationMs: duration,
+      recordsProcessed: result.recordsProcessed,
+      successRate: result.successRate,
+    });
+
+    if (result.anomalies?.length) {
+      for (const anomaly of result.anomalies) {
+        const fixtureId = anomaly.fixtureId;
+        if (fixtureId === undefined || fixtureId === null || fixtureId === "") {
+          continue;
+        }
+
+        fixtureLogger(String(fixtureId), "etl").warn("Connector anomaly detected", {
+          connector: connector.id,
+          jobName,
+          severity: anomaly.severity,
+          reason: anomaly.reason,
+        });
+      }
+    }
 
     if (countHighSeverity(result.anomalies) > 0) {
       await notifier.notifyEscalation({
@@ -76,6 +103,7 @@ export async function runConnector({ jobName, connector, db, notifier }: RunConn
       .where(eq(etlJobRuns.id, run.id));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown connector error";
+    span.error("Connector execution failed", { connector: connector.id, jobName, message });
 
     await db
       .update(etlJobRuns)

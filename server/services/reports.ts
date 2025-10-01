@@ -113,7 +113,7 @@ async function upsertBoxscore(
       stats,
     })
     .onConflictDoUpdate({
-      target: boxscores.uniqueFixtureTeam,
+      target: [boxscores.fixtureId, boxscores.teamId],
       set: {
         stats,
         updatedAt: new Date(),
@@ -227,37 +227,39 @@ export function parseResultsCsv(csv: string): ResultPayload[] {
   const metersHomeIdx = columnIndex("home_meters");
   const metersAwayIdx = columnIndex("away_meters");
 
-  return rows
-    .map((line) => {
-      const parts = line
-        .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-        .map((part) => part.replace(/^"|"$/g, "").trim());
+  const results: ResultPayload[] = [];
 
-      const fixtureId = parts[fixtureIdx];
-      const homeScore = Number(parts[homeIdx] ?? "0");
-      const awayScore = Number(parts[awayIdx] ?? "0");
+  for (const line of rows) {
+    const parts = line
+      .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+      .map((part) => part.replace(/^"|"$/g, "").trim());
 
-      if (!fixtureId) {
-        return null;
-      }
+    const fixtureId = parts[fixtureIdx];
+    const homeScoreRaw = Number(parts[homeIdx] ?? "0");
+    const awayScoreRaw = Number(parts[awayIdx] ?? "0");
 
-      const homeStats: Record<string, number> = {};
-      const awayStats: Record<string, number> = {};
+    if (!fixtureId) {
+      continue;
+    }
 
-      if (possessionHomeIdx >= 0) homeStats.possession = Number(parts[possessionHomeIdx] ?? "0");
-      if (metersHomeIdx >= 0) homeStats.meters = Number(parts[metersHomeIdx] ?? "0");
-      if (possessionAwayIdx >= 0) awayStats.possession = Number(parts[possessionAwayIdx] ?? "0");
-      if (metersAwayIdx >= 0) awayStats.meters = Number(parts[metersAwayIdx] ?? "0");
+    const homeStats: Record<string, number> = {};
+    const awayStats: Record<string, number> = {};
 
-      return {
-        fixtureId,
-        homeScore: Number.isFinite(homeScore) ? homeScore : 0,
-        awayScore: Number.isFinite(awayScore) ? awayScore : 0,
-        homeStats: Object.keys(homeStats).length ? homeStats : undefined,
-        awayStats: Object.keys(awayStats).length ? awayStats : undefined,
-      } satisfies ResultPayload;
-    })
-    .filter((item): item is ResultPayload => item !== null);
+    if (possessionHomeIdx >= 0) homeStats.possession = Number(parts[possessionHomeIdx] ?? "0");
+    if (metersHomeIdx >= 0) homeStats.meters = Number(parts[metersHomeIdx] ?? "0");
+    if (possessionAwayIdx >= 0) awayStats.possession = Number(parts[possessionAwayIdx] ?? "0");
+    if (metersAwayIdx >= 0) awayStats.meters = Number(parts[metersAwayIdx] ?? "0");
+
+    results.push({
+      fixtureId,
+      homeScore: Number.isFinite(homeScoreRaw) ? homeScoreRaw : 0,
+      awayScore: Number.isFinite(awayScoreRaw) ? awayScoreRaw : 0,
+      homeStats: Object.keys(homeStats).length ? homeStats : undefined,
+      awayStats: Object.keys(awayStats).length ? awayStats : undefined,
+    });
+  }
+
+  return results;
 }
 
 function computeProfit(row: typeof bets.$inferSelect): number {

@@ -26,6 +26,7 @@ import {
   type ResultPayload,
 } from "./services/reports";
 import { getFileStream } from "./storage";
+import { getObservabilityDashboard, getFixtureTraceDetails } from "./services/observability";
 
 export interface RouteDependencies {
   usersRepository: UsersRepository;
@@ -60,6 +61,30 @@ export async function registerRoutes(
       resource.stream.on("error", (error) => next(error));
       resource.stream.pipe(res);
       return;
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/observability/dashboard", async (_req, res, next) => {
+    try {
+      const dashboard = await getObservabilityDashboard();
+      res.json(dashboard);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/observability/fixtures/:id", async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        res.status(400).json({ message: "fixture id is required" });
+        return;
+      }
+
+      const trace = await getFixtureTraceDetails(id);
+      res.json(trace);
     } catch (error) {
       next(error);
     }

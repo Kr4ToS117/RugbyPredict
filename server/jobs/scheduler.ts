@@ -1,9 +1,9 @@
-import { log } from "../vite";
 import type { Database } from "../etl/types";
 import { getConnector, runConnector } from "../etl";
 import type { NotificationDispatcher } from "../notifications";
 import { trainAndRegisterModel } from "../services/models";
 import { runResultsPullJob } from "../services/reports";
+import { logger } from "../logging";
 
 export type JobName = "daily_intake" | "pre_match" | "results_pull" | "weekly_review";
 
@@ -79,22 +79,23 @@ export function startScheduler({ db, notifier }: SchedulerOptions) {
   const runningJobs = new Set<JobName>();
   const lastRuns = new Map<JobName, string>();
   const timers: NodeJS.Timeout[] = [];
+  const schedulerLogger = logger.child({ span: "scheduler" });
 
   async function executeJob(jobName: JobName) {
     if (runningJobs.has(jobName)) {
-      log(`Job ${jobName} skipped because a previous run is still active`, "scheduler");
+      schedulerLogger.warn({ jobName }, "Job skipped because a previous run is still active");
       return;
     }
 
     runningJobs.add(jobName);
-    log(`Starting job ${jobName}`, "scheduler");
+    schedulerLogger.info({ jobName }, "Starting job");
 
     try {
       const config = jobDefinitions[jobName];
       for (const connectorId of config.connectorIds) {
         const connector = getConnector(connectorId);
         if (!connector) {
-          log(`Unknown connector ${connectorId} requested by ${jobName}`, "scheduler");
+          schedulerLogger.warn({ jobName, connectorId }, "Unknown connector requested by job");
           continue;
         }
 
@@ -115,20 +116,20 @@ export function startScheduler({ db, notifier }: SchedulerOptions) {
             calibration: "platt",
             holdoutRatio: 0.25,
           });
-          log("Weekly review retraining completed", "scheduler");
+          schedulerLogger.info({ jobName }, "Weekly review retraining completed");
         } catch (trainingError) {
           const message = trainingError instanceof Error ? trainingError.message : String(trainingError);
-          log(`Weekly retraining skipped: ${message}`, "scheduler");
+          schedulerLogger.warn({ jobName, error: message }, "Weekly retraining skipped");
         }
       } else if (jobName === "results_pull") {
         const { updated } = await runResultsPullJob();
-        log(`Results pull synced ${updated} fixtures`, "scheduler");
+        schedulerLogger.info({ jobName, updated }, "Results pull completed");
       }
 
-      log(`Job ${jobName} completed`, "scheduler");
+      schedulerLogger.info({ jobName }, "Job completed");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`Job ${jobName} failed: ${message}`, "scheduler");
+      schedulerLogger.error({ jobName, error: message }, "Job failed");
       await notifier.notifyFailure({
         title: `Scheduler job ${jobName} failed`,
         body: message,
