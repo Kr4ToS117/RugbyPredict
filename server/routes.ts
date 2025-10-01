@@ -5,6 +5,8 @@ import { etlJobRuns, validationFlags } from "@shared/schema";
 import { listConnectors } from "./etl";
 import { db } from "./db";
 import type { UsersRepository } from "./services/users";
+import { listModels, updateModelLifecycle } from "./services/models";
+import { listFixtures, getFixturePredictions } from "./services/fixtures";
 
 export interface RouteDependencies {
   usersRepository: UsersRepository;
@@ -19,6 +21,58 @@ export async function registerRoutes(
 
   // put application routes here
   // prefix all routes with /api
+
+  app.get("/api/models", async (_req, res, next) => {
+    try {
+      const payload = await listModels();
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/models/:version/promote", async (req, res, next) => {
+    try {
+      const { version } = req.params;
+      if (!version) {
+        res.status(400).json({ message: "version parameter is required" });
+        return;
+      }
+
+      const actionRaw = req.body?.action;
+      const action = actionRaw === "rollback" ? "rollback" : "promote";
+      const payload = await updateModelLifecycle(version, action);
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/fixtures", async (req, res, next) => {
+    try {
+      const limitValue = Number.parseInt(String(req.query.limit ?? ""), 10);
+      const limit = Number.isFinite(limitValue) ? Math.max(1, Math.min(100, limitValue)) : 25;
+      const payload = await listFixtures(limit);
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/fixtures/:id/predictions", async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        res.status(400).json({ message: "fixture id is required" });
+        return;
+      }
+
+      const payload = await getFixturePredictions(id);
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.get("/api/etl/connectors", async (_req, res, next) => {
     try {
