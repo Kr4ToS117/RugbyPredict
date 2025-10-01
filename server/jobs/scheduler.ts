@@ -2,6 +2,7 @@ import { log } from "../vite";
 import type { Database } from "../etl/types";
 import { getConnector, runConnector } from "../etl";
 import type { NotificationDispatcher } from "../notifications";
+import { trainAndRegisterModel } from "../services/models";
 
 export type JobName = "daily_intake" | "pre_match" | "results_pull" | "weekly_review";
 
@@ -102,6 +103,22 @@ export function startScheduler({ db, notifier }: SchedulerOptions) {
           db,
           notifier,
         });
+      }
+
+      if (jobName === "weekly_review") {
+        try {
+          await trainAndRegisterModel({
+            modelName: "weekly-review-logit",
+            description: "Weekly automated retraining",
+            algorithm: "logit",
+            calibration: "platt",
+            holdoutRatio: 0.25,
+          });
+          log("Weekly review retraining completed", "scheduler");
+        } catch (trainingError) {
+          const message = trainingError instanceof Error ? trainingError.message : String(trainingError);
+          log(`Weekly retraining skipped: ${message}`, "scheduler");
+        }
       }
 
       log(`Job ${jobName} completed`, "scheduler");

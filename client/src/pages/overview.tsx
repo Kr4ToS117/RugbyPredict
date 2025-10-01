@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { KPICard } from "@/components/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
@@ -14,36 +16,93 @@ import {
   Scatter,
 } from "recharts";
 
-//todo: remove mock functionality
-const roiData = [
-  { date: "Oct", roi: 0 },
-  { date: "Nov", roi: 5.2 },
-  { date: "Dec", roi: 8.5 },
-  { date: "Jan", roi: 12.5 },
-];
+import type { ModelsResponse } from "./models";
 
-const calibrationData = [
-  { predicted: 10, actual: 12 },
-  { predicted: 25, actual: 22 },
-  { predicted: 40, actual: 38 },
-  { predicted: 55, actual: 58 },
-  { predicted: 70, actual: 68 },
-  { predicted: 85, actual: 82 },
-];
+interface FixturesResponse {
+  fixtures: Array<{
+    id: string;
+    competition: string | null;
+    kickoffAt: string;
+    venue: string | null;
+    homeTeam: { id: string; name: string };
+    awayTeam: { id: string; name: string };
+    probabilities: { home: number; draw: number; away: number } | null;
+    expectedScores: { home: number | null; away: number | null } | null;
+    edge: number | null;
+    modelVersion: string | null;
+  }>;
+  productionVersion: string | null;
+}
 
-const upcomingMatches = [
-  { home: "Toulouse", away: "La Rochelle", date: "Sat 21:05", edge: 5.8 },
-  { home: "Leinster", away: "Munster", date: "Sun 15:30", edge: 3.2 },
-  { home: "Racing 92", away: "Stade Français", date: "Sun 17:00", edge: 1.8 },
-];
+interface ValidationIssue {
+  id: string;
+  fixture: string;
+  field: string;
+  severity: "high" | "medium" | "low";
+  sources: Array<{ name: string; value: string }>;
+}
 
-const alerts = [
-  { type: "error", message: "Odds Provider API timeout", time: "2 min ago" },
-  { type: "warning", message: "Lineup conflict: Toulouse vs La Rochelle", time: "15 min ago" },
-  { type: "info", message: "Model drift detected: 0.8% variance", time: "1 hour ago" },
-];
+interface ValidationResponse {
+  issues: ValidationIssue[];
+}
+
+function formatDateLabel(iso: string): string {
+  const date = new Date(iso);
+  return new Intl.DateTimeFormat("fr-FR", {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+}
 
 export default function Overview() {
+  const { data: modelsData } = useQuery<ModelsResponse>({ queryKey: ["/api/models"] });
+  const { data: fixturesData } = useQuery<FixturesResponse>({ queryKey: ["/api/fixtures"] });
+  const { data: validationData } = useQuery<ValidationResponse>({
+    queryKey: ["/api/validation/issues"],
+  });
+
+  const productionModel = useMemo(
+    () => modelsData?.models.find((model) => model.status === "production") ?? null,
+    [modelsData],
+  );
+
+  const backtestMetrics = productionModel?.metrics.backtest ?? productionModel?.metrics.training;
+  const roiValue = backtestMetrics?.roi ?? 0;
+  const yieldPercent = backtestMetrics?.yield && backtestMetrics.yield > 0
+    ? (backtestMetrics.yield - 1) * 100
+    : 0;
+  const hitRate = backtestMetrics?.hitRate ?? 0;
+  const brierScore = backtestMetrics?.brierScore ?? 0;
+
+  const roiSeries = productionModel?.metrics.roiSeries ?? [];
+  const roiData = roiSeries.map((point) => ({ date: point.period, roi: point.roi }));
+  const roiTrend =
+    roiSeries.length > 1
+      ? Number((roiSeries[roiSeries.length - 1].roi - roiSeries[roiSeries.length - 2].roi).toFixed(2))
+      : undefined;
+
+  const calibrationData =
+    productionModel?.metrics.calibration?.curve?.map((point) => ({
+      predicted: point.predicted,
+      actual: point.actual,
+    })) ?? [];
+
+  const upcomingMatches = fixturesData?.fixtures.map((fixture) => ({
+    id: fixture.id,
+    competition: fixture.competition ?? "",
+    home: fixture.homeTeam.name,
+    away: fixture.awayTeam.name,
+    date: formatDateLabel(fixture.kickoffAt),
+    venue: fixture.venue ?? "",
+    edge: fixture.edge !== null ? Number((fixture.edge * 100).toFixed(1)) : 0,
+    probabilities: fixture.probabilities,
+  })) ?? [];
+
+  const alerts = validationData?.issues ?? [];
+
   return (
     <div className="space-y-6">
       <div>
@@ -54,10 +113,10 @@ export default function Overview() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPICard title="ROI" value="12.5" suffix="%" trend={3.2} />
-        <KPICard title="Yield" value="8.3" suffix="%" trend={-1.5} />
-        <KPICard title="Hit Rate" value="54.2" suffix="%" trend={2.1} />
-        <KPICard title="Brier Score" value="0.184" />
+        <KPICard title="ROI" value={roiValue.toFixed(2)} suffix="%" trend={roiTrend} />
+        <KPICard title="Yield" value={yieldPercent.toFixed(2)} suffix="%" />
+        <KPICard title="Hit Rate" value={hitRate.toFixed(2)} suffix="%" />
+        <KPICard title="Brier Score" value={brierScore.toFixed(3)} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -143,9 +202,9 @@ export default function Overview() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {upcomingMatches.map((match, idx) => (
+              {upcomingMatches.map((match) => (
                 <div
-                  key={idx}
+                  key={match.id}
                   className="flex items-center justify-between p-3 rounded-md hover-elevate border border-border"
                 >
                   <div>
@@ -154,7 +213,7 @@ export default function Overview() {
                     </div>
                     <div className="text-sm text-muted-foreground">{match.date}</div>
                   </div>
-                  {match.edge > 3 && (
+                  {match.edge > 1 && (
                     <StatusBadge status={`+${match.edge}% Edge`} variant="success" />
                   )}
                 </div>
@@ -172,26 +231,32 @@ export default function Overview() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {alerts.map((alert, idx) => (
+              {alerts.map((alert) => {
+                const variant =
+                  alert.severity === "high"
+                    ? "error"
+                    : alert.severity === "medium"
+                      ? "warning"
+                      : "info";
+                const primarySource = alert.sources?.[0];
+
+                return (
                 <div
-                  key={idx}
+                  key={alert.id}
                   className="flex items-start gap-3 p-3 rounded-md border border-border"
                 >
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <StatusBadge
-                        status={alert.type}
-                        variant={
-                          alert.type === "error" ? "error" :
-                          alert.type === "warning" ? "warning" : "info"
-                        }
-                      />
-                      <span className="text-xs text-muted-foreground">{alert.time}</span>
+                      <StatusBadge status={alert.severity} variant={variant} />
+                      <span className="text-xs text-muted-foreground">{alert.field}</span>
                     </div>
-                    <div className="text-sm">{alert.message}</div>
+                    <div className="text-sm">
+                      {primarySource?.value ?? primarySource?.name ?? alert.fixture}
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
