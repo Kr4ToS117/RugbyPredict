@@ -2,6 +2,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { modelRegistry, predictions } from "@shared/schema";
 import { trainModel, type TrainingJobConfig, type TrainingResult } from "../models/training";
+import { createTraceLogger, fixtureLogger } from "../logging";
 
 export type ModelStatus = "production" | "staging" | "archived";
 
@@ -173,7 +174,19 @@ export interface RegisterModelResult {
 
 export async function trainAndRegisterModel(options: RegisterModelOptions): Promise<RegisterModelResult> {
   const version = options.version ?? (await nextVersion(options.modelName));
+  const span = createTraceLogger("models", {});
+  span.info("Model training started", {
+    model: options.modelName,
+    version,
+    algorithm: options.algorithm,
+  });
   const training = await trainModel({ ...options, version });
+
+  span.info("Model training completed", {
+    model: options.modelName,
+    version,
+    metrics: training.metrics.training,
+  });
 
   const metricsPayload: ModelMetrics = {
     training: training.metrics.training,
@@ -244,12 +257,25 @@ export async function trainAndRegisterModel(options: RegisterModelOptions): Prom
             explanation: sql`excluded.explanation`,
           },
         });
+
+      for (const prediction of training.predictions) {
+        fixtureLogger(prediction.fixtureId, "models").info("Prediction persisted", {
+          model: options.modelName,
+          version,
+          edge: prediction.edge,
+        });
+      }
     }
   });
 
   if (!summary) {
     throw new Error("Failed to persist trained model");
   }
+
+  span.info("Model registration completed", {
+    model: options.modelName,
+    version,
+  });
 
   return { summary, training };
 }
@@ -267,6 +293,8 @@ export async function updateModelLifecycle(
   version: string,
   action: LifecycleAction = "promote",
 ): Promise<ModelsResponse> {
+  const span = createTraceLogger("model-lifecycle", {});
+  span.info("Lifecycle update requested", { version, action });
   await db.transaction(async (tx) => {
     const rows = await tx.select().from(modelRegistry);
     const target = rows.find((row) => row.version === version);
@@ -287,12 +315,14 @@ export async function updateModelLifecycle(
             statusHistory: buildStatusHistory(metrics.statusHistory, { status: "production", at: now }),
           });
           await tx.update(modelRegistry).set({ metrics: updated }).where(eq(modelRegistry.id, row.id));
+          span.info("Model promoted", { version });
         } else if (metrics.status === "production") {
           const updated = mergeMetrics(metrics, {
             status: "archived",
             statusHistory: buildStatusHistory(metrics.statusHistory, { status: "archived", at: now }),
           });
           await tx.update(modelRegistry).set({ metrics: updated }).where(eq(modelRegistry.id, row.id));
+          span.info("Model archived", { version: row.version });
         }
       }
       return;
@@ -321,6 +351,7 @@ export async function updateModelLifecycle(
         statusHistory: buildStatusHistory(targetMetrics.statusHistory, { status: "production", at: now }),
       });
       await tx.update(modelRegistry).set({ metrics: promoted }).where(eq(modelRegistry.id, target.id));
+      span.info("Model rolled back into production", { version });
       return;
     }
 
@@ -354,6 +385,7 @@ export async function updateModelLifecycle(
         .update(modelRegistry)
         .set({ metrics: promoted })
         .where(eq(modelRegistry.id, fallback.row.id));
+      span.info("Fallback model promoted", { version: fallback.row.version });
     }
   });
 
@@ -376,3 +408,11 @@ export async function getProductionModelId(): Promise<string | null> {
   const info = await getProductionModelInfo();
   return info?.id ?? null;
 }
+
+export const __testing = {
+  coerceMetrics,
+  mergeMetrics,
+  bumpPatch,
+  mapRowToSummary,
+  buildStatusHistory,
+};

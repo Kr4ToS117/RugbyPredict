@@ -11,6 +11,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { listFiles, saveFile, type StoredFile } from "../storage";
+import { createTraceLogger, fixtureLogger } from "../logging";
 
 function toNumber(value: unknown): number {
   if (typeof value === "number") return value;
@@ -196,7 +197,7 @@ function buildBetView(row: BetWithContext): BetView {
     ? `${row.fixture.homeTeam?.name ?? "Home"} vs ${row.fixture.awayTeam?.name ?? "Away"}`
     : "Unknown fixture";
 
-  return {
+  const view: BetView = {
     id: row.id,
     fixtureId: row.fixtureId,
     fixtureLabel,
@@ -212,6 +213,14 @@ function buildBetView(row: BetWithContext): BetView {
     settledAt: row.settledAt?.toISOString() ?? null,
     notes: row.notes ?? null,
   };
+
+  fixtureLogger(row.fixtureId, "bankroll").debug("Bet view computed", {
+    betId: row.id,
+    status: row.status,
+    stake,
+  });
+
+  return view;
 }
 
 async function fetchBets(): Promise<BetWithContext[]> {
@@ -239,6 +248,8 @@ export async function listBetViews(): Promise<{ bets: BetView[] }> {
 
 export async function getBankrollSummary(): Promise<BankrollSummaryResponse> {
   const rows = await fetchBets();
+  const span = createTraceLogger("bankroll", {});
+  span.info("Computing bankroll summary", { totalBets: rows.length });
   const starting = STARTING_BANKROLL;
 
   let totalStaked = 0;
@@ -357,7 +368,7 @@ export async function getBankrollSummary(): Promise<BankrollSummaryResponse> {
   const teamLimit = current * TEAM_EXPOSURE_LIMIT;
   const stopLossLimit = current * WEEKLY_STOP_LOSS;
 
-  for (const [label, info] of competitionExposure.entries()) {
+  for (const [label, info] of Array.from(competitionExposure.entries())) {
     exposures.push({
       id: `competition:${label}`,
       type: "competition",
@@ -368,7 +379,7 @@ export async function getBankrollSummary(): Promise<BankrollSummaryResponse> {
     });
   }
 
-  for (const [teamId, info] of teamExposure.entries()) {
+  for (const [teamId, info] of Array.from(teamExposure.entries())) {
     exposures.push({
       id: `team:${teamId}`,
       type: "team",
@@ -441,7 +452,7 @@ export async function getBankrollSummary(): Promise<BankrollSummaryResponse> {
 
   const exports = await listFiles("bankroll");
 
-  return {
+  const summary: BankrollSummaryResponse = {
     bankroll: {
       starting,
       current: Number(current.toFixed(2)),
@@ -462,6 +473,14 @@ export async function getBankrollSummary(): Promise<BankrollSummaryResponse> {
     history,
     exports,
   };
+
+  span.info("Bankroll summary computed", {
+    current: summary.bankroll.current,
+    roi: summary.bankroll.roi,
+    exposures: summary.exposures.length,
+  });
+
+  return summary;
 }
 
 async function resolveDefaultUserId(): Promise<string> {
@@ -612,3 +631,11 @@ export async function generateBankrollExport(): Promise<StoredFile> {
     contentType: "text/csv",
   });
 }
+
+export const __testing = {
+  toNumber,
+  computeProfit,
+  computeKellyStake,
+  getOutcomeProbability,
+  buildBetView,
+};
