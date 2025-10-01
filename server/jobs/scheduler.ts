@@ -3,6 +3,7 @@ import type { Database } from "../etl/types";
 import { getConnector, runConnector } from "../etl";
 import type { NotificationDispatcher } from "../notifications";
 import { trainAndRegisterModel } from "../services/models";
+import { runResultsPullJob } from "../services/reports";
 
 export type JobName = "daily_intake" | "pre_match" | "results_pull" | "weekly_review";
 
@@ -119,6 +120,9 @@ export function startScheduler({ db, notifier }: SchedulerOptions) {
           const message = trainingError instanceof Error ? trainingError.message : String(trainingError);
           log(`Weekly retraining skipped: ${message}`, "scheduler");
         }
+      } else if (jobName === "results_pull") {
+        const { updated } = await runResultsPullJob();
+        log(`Results pull synced ${updated} fixtures`, "scheduler");
       }
 
       log(`Job ${jobName} completed`, "scheduler");

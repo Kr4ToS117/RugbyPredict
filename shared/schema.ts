@@ -230,6 +230,34 @@ export const events = pgTable(
   }),
 );
 
+export const boxscores = pgTable(
+  "boxscores",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    fixtureId: uuid("fixture_id")
+      .references(() => fixtures.id, { onDelete: "cascade" })
+      .notNull(),
+    teamId: uuid("team_id")
+      .references(() => teams.id, { onDelete: "cascade" })
+      .notNull(),
+    stats: jsonb("stats"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    fixtureIdx: index("boxscores_fixture_idx").on(table.fixtureId),
+    teamIdx: index("boxscores_team_idx").on(table.teamId),
+    uniqueFixtureTeam: uniqueIndex("boxscores_fixture_team_idx").on(
+      table.fixtureId,
+      table.teamId,
+    ),
+  }),
+);
+
 export const odds = pgTable(
   "odds",
   {
@@ -428,6 +456,7 @@ export const teamRelations = relations(teams, ({ many }) => ({
   homeFixtures: many(fixtures, { relationName: "homeTeam" }),
   awayFixtures: many(fixtures, { relationName: "awayTeam" }),
   lineups: many(lineups),
+  boxscores: many(boxscores),
   teamSeasons: many(teamSeasons),
 }));
 
@@ -462,6 +491,7 @@ export const fixtureRelations = relations(fixtures, ({ one, many }) => ({
     relationName: "awayTeam",
   }),
   lineups: many(lineups),
+  boxscores: many(boxscores),
   events: many(events),
   odds: many(odds),
   weather: one(weather),
@@ -571,5 +601,6 @@ export type Team = typeof teams.$inferSelect;
 export type Fixture = typeof fixtures.$inferSelect;
 export type Prediction = typeof predictions.$inferSelect;
 export type Bet = typeof bets.$inferSelect;
+export type Boxscore = typeof boxscores.$inferSelect;
 export type ValidationFlag = typeof validationFlags.$inferSelect;
 export type EtlJobRun = typeof etlJobRuns.$inferSelect;

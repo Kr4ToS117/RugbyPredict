@@ -46,6 +46,38 @@ interface ValidationResponse {
   issues: ValidationIssue[];
 }
 
+interface RiskExposure {
+  id: string;
+  type: "competition" | "team" | "stop_loss";
+  label: string;
+  exposure: number;
+  limit: number;
+  breaching: boolean;
+}
+
+interface StakeRecommendation {
+  strategy: string;
+  percentage: number;
+  amount: number;
+  label: string;
+}
+
+interface OverviewResponse {
+  models: ModelsResponse;
+  fixtures: FixturesResponse;
+  validation: ValidationResponse;
+  risk: {
+    exposures: RiskExposure[];
+    recommendations: StakeRecommendation[];
+    bankroll: {
+      roi: number;
+      hitRate: number;
+      yield: number;
+      netProfit: number;
+    } & Record<string, number>;
+  };
+}
+
 function formatDateLabel(iso: string): string {
   const date = new Date(iso);
   return new Intl.DateTimeFormat("fr-FR", {
@@ -58,11 +90,18 @@ function formatDateLabel(iso: string): string {
 }
 
 export default function Overview() {
-  const { data: modelsData } = useQuery<ModelsResponse>({ queryKey: ["/api/models"] });
-  const { data: fixturesData } = useQuery<FixturesResponse>({ queryKey: ["/api/fixtures"] });
-  const { data: validationData } = useQuery<ValidationResponse>({
-    queryKey: ["/api/validation/issues"],
+  const { data, isError, error } = useQuery<OverviewResponse>({
+    queryKey: ["/api/overview"],
   });
+
+  if (isError) {
+    throw error;
+  }
+
+  const modelsData = data?.models;
+  const fixturesData = data?.fixtures;
+  const validationData = data?.validation;
+  const riskData = data?.risk;
 
   const productionModel = useMemo(
     () => modelsData?.models.find((model) => model.status === "production") ?? null,
@@ -101,7 +140,24 @@ export default function Overview() {
     probabilities: fixture.probabilities,
   })) ?? [];
 
-  const alerts = validationData?.issues ?? [];
+  const riskAlerts = (riskData?.exposures ?? [])
+    .filter((exposure) => exposure.breaching)
+    .map((exposure) => ({
+      id: exposure.id,
+      fixture: exposure.label,
+      field: exposure.type === "stop_loss" ? "Stop-loss" : "Exposure",
+      severity: "high" as const,
+      sources: [
+        {
+          name: "Exposition",
+          value: `€${exposure.exposure.toFixed(2)} / €${exposure.limit.toFixed(2)}`,
+        },
+      ],
+    }));
+
+  const alerts = [...(validationData?.issues ?? []), ...riskAlerts];
+  const exposures = riskData?.exposures ?? [];
+  const recommendations = riskData?.recommendations ?? [];
 
   return (
     <div className="space-y-6">
@@ -195,7 +251,7 @@ export default function Overview() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card>
           <CardHeader>
             <CardTitle>Upcoming Fixtures</CardTitle>
@@ -253,11 +309,60 @@ export default function Overview() {
                     <div className="text-sm">
                       {primarySource?.value ?? primarySource?.name ?? alert.fixture}
                     </div>
-                  </div>
+                </div>
                 </div>
                 );
               })}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Risk Limits</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {exposures.map((exposure) => (
+                <div
+                  key={exposure.id}
+                  className={`flex items-center justify-between rounded-md border border-border p-3 ${
+                    exposure.breaching ? "bg-destructive/5" : ""
+                  }`}
+                >
+                  <div>
+                    <div className="font-medium">{exposure.label}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {exposure.type === "stop_loss" ? "Stop-loss" : "Exposure"}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-sm">
+                      €{exposure.exposure.toFixed(2)} / €{exposure.limit.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {((exposure.exposure / exposure.limit) * 100).toFixed(1)}% utilisé
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!exposures.length && (
+                <p className="text-sm text-muted-foreground">Aucune exposition suivie.</p>
+              )}
+            </div>
+            {recommendations.length ? (
+              <div className="mt-4 border-t border-border pt-3 space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Recommandations de mise
+                </div>
+                {recommendations.map((item) => (
+                  <div key={item.strategy} className="flex items-center justify-between text-sm">
+                    <span>{item.label}</span>
+                    <span className="font-mono">€{item.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>

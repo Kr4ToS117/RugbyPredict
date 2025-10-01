@@ -15,6 +15,13 @@
       "when": 1759321620207,
       "tag": "0001_scheduler_etl_support",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1759321620208,
+      "tag": "0002_results_boxscores",
+      "breakpoints": true
     }
   ]
 }
