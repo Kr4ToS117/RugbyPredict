@@ -17,7 +17,7 @@ import {
   type SeasonMapping,
   type TeamMapping,
 } from "./mappings";
-import type { ConnectorAnomaly, Database } from "./types";
+import type { ConnectorAnomaly, ConnectorError, Database } from "./types";
 
 export function toUtcDate(value: string | Date): Date {
   const date = typeof value === "string" ? new Date(value) : value;
@@ -176,31 +176,69 @@ export function buildFixtureLabel(homeTeam: Team, awayTeam: Team) {
   return `${homeTeam.shortName ?? homeTeam.name} vs ${awayTeam.shortName ?? awayTeam.name}`;
 }
 
-export async function recordAnomalies(
+async function insertValidationFlags(
   db: Database,
-  anomalies: ConnectorAnomaly[] | undefined,
+  items:
+    | ConnectorAnomaly[]
+    | ConnectorError[]
+    | (ConnectorAnomaly | ConnectorError)[]
+    | undefined,
+  mapDetails: (item: ConnectorAnomaly | ConnectorError) => Record<string, unknown>,
 ) {
-  if (!anomalies?.length) {
+  if (!items?.length) {
     return;
   }
 
   await Promise.all(
-    anomalies.map(async (anomaly) => {
+    items.map(async (item) => {
+      const details = mapDetails(item);
       await db.insert(validationFlags).values({
-        level: anomaly.severity,
-        reason: anomaly.reason,
-        source: anomaly.connectorId,
-        details: {
-          fixtureId: anomaly.fixtureId,
-          fixtureLabel: anomaly.fixtureLabel,
-          field: anomaly.field,
-          sources: anomaly.sources,
-        },
+        level: item.severity,
+        reason: "reason" in item ? item.reason : item.message,
+        source: (details.source as string | undefined) ?? "unknown", 
+        details,
       });
     }),
   );
 }
 
-export function countHighSeverity(anomalies: ConnectorAnomaly[] | undefined) {
-  return anomalies?.filter((item) => item.severity === "high").length ?? 0;
+export async function recordAnomalies(
+  db: Database,
+  anomalies: ConnectorAnomaly[] | undefined,
+) {
+  await insertValidationFlags(
+    db,
+    anomalies,
+    (anomaly) => ({
+      type: "anomaly",
+      source: (anomaly as ConnectorAnomaly).connectorId,
+      fixtureId: (anomaly as ConnectorAnomaly).fixtureId,
+      fixtureLabel: (anomaly as ConnectorAnomaly).fixtureLabel,
+      field: (anomaly as ConnectorAnomaly).field,
+      sources: (anomaly as ConnectorAnomaly).sources,
+    }),
+  );
+}
+
+export async function recordConnectorErrors(
+  db: Database,
+  connectorId: string,
+  errors: ConnectorError[] | undefined,
+) {
+  await insertValidationFlags(
+    db,
+    errors,
+    (error) => ({
+      type: "error",
+      source: connectorId,
+      scope: (error as ConnectorError).scope,
+      context: (error as ConnectorError).context,
+    }),
+  );
+}
+
+export function countHighSeverity(
+  issues: Array<{ severity: ConnectorAnomaly["severity"] }> | undefined,
+) {
+  return issues?.filter((item) => item.severity === "high").length ?? 0;
 }

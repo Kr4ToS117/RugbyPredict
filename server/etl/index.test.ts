@@ -21,20 +21,18 @@ function createMockDb() {
       return {
         values(values: any) {
           insertCalls.push({ table, values });
-          if (table === etlJobRuns) {
-            return {
-              returning: async () => [{ id: "run-1" }],
-            };
-          }
-
-          return {
-            returning: async () => values,
+          const builder = {
+            onConflictDoUpdate() {
+              return builder;
+            },
+            returning: async () => {
+              if (table === etlJobRuns) {
+                return [{ id: "run-1" }];
+              }
+              return Array.isArray(values) ? values : [values];
+            },
           };
-        },
-        onConflictDoUpdate() {
-          return {
-            returning: async () => [{ id: "run-1" }],
-          };
+          return builder;
         },
       };
     },
@@ -83,6 +81,7 @@ describe("etl service", () => {
           successRate: 0.8,
           anomalies: [],
           logs: [],
+          metrics: { processed: 5 },
         };
       },
     };
@@ -99,6 +98,8 @@ describe("etl service", () => {
 
     expect(insertCalls[0]?.table).toBe(etlJobRuns);
     expect(updateCalls.length).toBe(1);
+    expect(updateCalls[0]?.payload.metadata.metrics).toEqual({ processed: 5 });
+    expect(updateCalls[0]?.payload.metadata.errors).toEqual([]);
     expect(escalations.length).toBe(0);
     expect(failures.length).toBe(0);
   });
@@ -194,5 +195,46 @@ describe("etl service", () => {
     const validationInsert = insertCalls.find((call) => call.table === validationFlags);
     expect(validationInsert).toBeDefined();
     expect((validationInsert as InsertCall | undefined)?.values?.reason).toBe("Check");
+    expect((validationInsert as InsertCall | undefined)?.values?.details?.type).toBe("anomaly");
+  });
+
+  test("persists connector errors and metrics", async () => {
+    const { db, insertCalls, updateCalls } = createMockDb();
+    const escalations: any[] = [];
+    const connector = {
+      id: "sample",
+      label: "Sample",
+      async execute() {
+        return {
+          recordsProcessed: 1,
+          successRate: 50,
+          logs: [],
+          errors: [
+            { severity: "high", message: "Missing team", scope: "fx-1" },
+            { severity: "low", message: "Minor" },
+          ],
+          metrics: { processed: 1, received: 2 },
+        };
+      },
+    };
+
+    await runConnector({
+      jobName: "daily",
+      connector,
+      db,
+      notifier: {
+        notifyEscalation: (payload) => escalations.push(payload),
+        notifyFailure: () => undefined,
+      },
+    });
+
+    const errorFlags = insertCalls.filter((call) => call.table === validationFlags);
+    expect(errorFlags.length).toBeGreaterThan(0);
+    expect(errorFlags.some((call) => call.values.reason === "Missing team")).toBe(true);
+    expect(updateCalls[0]?.payload.metadata.metrics).toEqual({ processed: 1, received: 2 });
+    expect(updateCalls[0]?.payload.metadata.errors).toHaveLength(2);
+    expect(updateCalls[0]?.payload.issues).toBe(2);
+    expect(escalations.length).toBe(1);
+    expect(escalations[0].title).toContain("Sample");
   });
 });

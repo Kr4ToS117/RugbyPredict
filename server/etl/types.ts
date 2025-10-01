@@ -26,11 +26,22 @@ export interface ConnectorAnomaly {
   reason: string;
 }
 
+export interface ConnectorError {
+  message: string;
+  severity: "high" | "medium" | "low";
+  scope?: string;
+  context?: Record<string, unknown>;
+}
+
+export type ConnectorMetrics = Record<string, string | number | boolean>;
+
 export interface ConnectorResult {
   recordsProcessed: number;
   successRate: number;
   logs?: ConnectorLog[];
   anomalies?: ConnectorAnomaly[];
+  errors?: ConnectorError[];
+  metrics?: ConnectorMetrics;
 }
 
 export interface ConnectorContext {
