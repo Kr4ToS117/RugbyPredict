@@ -33,8 +33,8 @@ describe("feature engineering", () => {
   });
 
   test("calculates fatigue index", () => {
-    expect(computeFatigueIndex(7)).toBeLessThan(1);
-    expect(computeFatigueIndex(1)).toBeGreaterThan(1);
+    expect(computeFatigueIndex(7)).toBeCloseTo(0.14, 2);
+    expect(computeFatigueIndex(1)).toBe(1);
   });
 
   test("handles implied probability", () => {

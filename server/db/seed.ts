@@ -1,11 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   bets,
   competitions,
-  events,
   fixtures,
-  lineupPlayers,
-  lineups,
   modelRegistry,
   odds,
   predictions,
@@ -15,8 +12,10 @@ import {
   users,
   validationFlags,
   weather,
+  boxscores,
 } from "@shared/schema";
 import { db, pool } from "../db";
+import { COMPETITIONS, TEAM_DATA } from "../data/sampleSeasons";
 
 async function seed() {
   await db.transaction(async (tx) => {
@@ -24,10 +23,8 @@ async function seed() {
     await tx.delete(bets);
     await tx.delete(predictions);
     await tx.delete(odds);
-    await tx.delete(events);
-    await tx.delete(lineupPlayers);
-    await tx.delete(lineups);
     await tx.delete(weather);
+    await tx.delete(boxscores);
     await tx.delete(fixtures);
     await tx.delete(teamSeasons);
     await tx.delete(seasons);
@@ -35,250 +32,228 @@ async function seed() {
     await tx.delete(teams);
     await tx.delete(competitions);
 
-    const [premiership] = await tx
-      .insert(competitions)
-      .values({
-        name: "Gallagher Premiership",
-        code: "ENG-PREM",
-        country: "England",
-        level: "Top Flight",
-      })
-      .returning();
+    const teamsByCode = new Map<string, typeof teams.$inferSelect>();
 
-    const [season2024] = await tx
-      .insert(seasons)
-      .values({
-        competitionId: premiership.id,
-        name: "2024/2025",
-        startDate: "2024-09-07",
-        endDate: "2025-06-07",
-        year: 2024,
-      })
-      .returning();
+    for (const team of Object.values(TEAM_DATA)) {
+      const [row] = await tx
+        .insert(teams)
+        .values({
+          id: team.id,
+          name: team.name,
+          shortName: team.shortName,
+          code: team.code,
+          foundedYear: team.foundedYear,
+          city: team.city,
+          country: team.country,
+          primaryColor: team.primaryColor,
+          secondaryColor: team.secondaryColor,
+        })
+        .onConflictDoUpdate({
+          target: teams.id,
+          set: {
+            name: team.name,
+            shortName: team.shortName,
+            code: team.code,
+            foundedYear: team.foundedYear,
+            city: team.city,
+            country: team.country,
+            primaryColor: team.primaryColor,
+            secondaryColor: team.secondaryColor,
+          },
+        })
+        .returning();
 
-    const teamRows = await tx
-      .insert(teams)
-      .values([
-        {
-          name: "Harlequins",
-          shortName: "Quins",
-          code: "HAR",
-          foundedYear: 1866,
-          city: "London",
-          country: "England",
-          primaryColor: "#651d32",
-          secondaryColor: "#009a44",
-        },
-        {
-          name: "Saracens",
-          shortName: "Sarries",
-          code: "SAR",
-          foundedYear: 1876,
-          city: "London",
-          country: "England",
-          primaryColor: "#000000",
-          secondaryColor: "#ff0000",
-        },
-        {
-          name: "Bath Rugby",
-          shortName: "Bath",
-          code: "BAT",
-          foundedYear: 1865,
-          city: "Bath",
-          country: "England",
-          primaryColor: "#0055a4",
-          secondaryColor: "#ffffff",
-        },
-        {
-          name: "Leicester Tigers",
-          shortName: "Tigers",
-          code: "LEI",
-          foundedYear: 1880,
-          city: "Leicester",
-          country: "England",
-          primaryColor: "#006a4e",
-          secondaryColor: "#ffffff",
-        },
-      ])
-      .returning();
+      teamsByCode.set(team.code, row);
+    }
 
-    const teamsByCode = new Map(teamRows.map((team) => [team.code ?? team.name, team]));
+    const seededFixtures: typeof fixtures.$inferSelect[] = [];
+    let highlightPredictionId: string | null = null;
 
-    await tx.insert(teamSeasons).values(
-      teamRows.map((team) => ({
-        teamId: team.id,
-        seasonId: season2024.id,
-        competitionId: premiership.id,
-        homeStadium:
-          team.code === "HAR"
-            ? "Twickenham Stoop"
-            : team.code === "SAR"
-              ? "StoneX Stadium"
-              : team.code === "BAT"
-                ? "Recreation Ground"
-                : "Mattioli Woods Welford Road",
-      })),
-    );
+    for (const competition of COMPETITIONS) {
+      const [competitionRow] = await tx
+        .insert(competitions)
+        .values({
+          id: competition.id,
+          code: competition.code,
+          name: competition.name,
+          country: competition.country,
+          level: competition.level,
+        })
+        .onConflictDoUpdate({
+          target: competitions.id,
+          set: {
+            name: competition.name,
+            code: competition.code,
+            country: competition.country,
+            level: competition.level,
+          },
+        })
+        .returning();
 
-    const [fixtureOne] = await tx
-      .insert(fixtures)
-      .values({
-        seasonId: season2024.id,
-        round: 1,
-        matchDay: 1,
-        stage: "Regular Season",
-        homeTeamId: teamsByCode.get("HAR")!.id,
-        awayTeamId: teamsByCode.get("SAR")!.id,
-        venue: "Twickenham Stoop",
-        referee: "Wayne Barnes",
-        attendance: 14800,
-        kickoffAt: new Date("2024-10-05T14:00:00Z"),
-        status: "completed",
-        homeScore: 28,
-        awayScore: 24,
-      })
-      .returning();
+      for (const season of competition.seasons) {
+        const [seasonRow] = await tx
+          .insert(seasons)
+          .values({
+            id: season.id,
+            competitionId: competitionRow.id,
+            name: season.name,
+            startDate: season.startDate,
+            endDate: season.endDate,
+            year: season.year,
+          })
+          .onConflictDoUpdate({
+            target: seasons.id,
+            set: {
+              competitionId: competitionRow.id,
+              name: season.name,
+              startDate: season.startDate,
+              endDate: season.endDate,
+              year: season.year,
+            },
+          })
+          .returning();
 
-    const [fixtureTwo] = await tx
-      .insert(fixtures)
-      .values({
-        seasonId: season2024.id,
-        round: 1,
-        matchDay: 1,
-        stage: "Regular Season",
-        homeTeamId: teamsByCode.get("BAT")!.id,
-        awayTeamId: teamsByCode.get("LEI")!.id,
-        venue: "Recreation Ground",
-        referee: "Luke Pearce",
-        attendance: 16200,
-        kickoffAt: new Date("2024-10-06T13:00:00Z"),
-        status: "scheduled",
-      })
-      .returning();
+        for (const teamCode of season.teamCodes) {
+          const teamSeed = TEAM_DATA[teamCode];
+          if (!teamSeed) continue;
+          const teamRecord = teamsByCode.get(teamSeed.code);
+          if (!teamRecord) continue;
 
-    const [quinsLineup] = await tx
-      .insert(lineups)
-      .values({
-        fixtureId: fixtureOne.id,
-        teamId: teamsByCode.get("HAR")!.id,
-        formation: "15-man",
-        tactic: "High-tempo attacking",
-        coach: "Tabai Matson",
-      })
-      .returning();
+          await tx
+            .insert(teamSeasons)
+            .values({
+              teamId: teamRecord.id,
+              seasonId: seasonRow.id,
+              competitionId: competitionRow.id,
+              homeStadium: teamSeed.homeStadium,
+            })
+            .onConflictDoUpdate({
+              target: [teamSeasons.teamId, teamSeasons.seasonId],
+              set: {
+                competitionId: competitionRow.id,
+                homeStadium: teamSeed.homeStadium,
+              },
+            });
+        }
 
-    const [saracensLineup] = await tx
-      .insert(lineups)
-      .values({
-        fixtureId: fixtureOne.id,
-        teamId: teamsByCode.get("SAR")!.id,
-        formation: "15-man",
-        tactic: "Territory control",
-        coach: "Mark McCall",
-      })
-      .returning();
+        for (const fixture of season.fixtures) {
+          const homeTeamSeed = TEAM_DATA[fixture.homeTeam];
+          const awayTeamSeed = TEAM_DATA[fixture.awayTeam];
+          const homeTeam = homeTeamSeed ? teamsByCode.get(homeTeamSeed.code) : null;
+          const awayTeam = awayTeamSeed ? teamsByCode.get(awayTeamSeed.code) : null;
+          if (!homeTeam || !awayTeam) {
+            continue;
+          }
 
-    await tx.insert(lineupPlayers).values([
-      {
-        lineupId: quinsLineup.id,
-        playerName: "Marcus Smith",
-        position: "Fly-half",
-        shirtNumber: 10,
-        isStarting: true,
-      },
-      {
-        lineupId: quinsLineup.id,
-        playerName: "Andre Esterhuizen",
-        position: "Centre",
-        shirtNumber: 12,
-        isStarting: true,
-      },
-      {
-        lineupId: quinsLineup.id,
-        playerName: "Danny Care",
-        position: "Scrum-half",
-        shirtNumber: 9,
-        isStarting: true,
-      },
-      {
-        lineupId: saracensLineup.id,
-        playerName: "Owen Farrell",
-        position: "Fly-half",
-        shirtNumber: 10,
-        isStarting: true,
-      },
-      {
-        lineupId: saracensLineup.id,
-        playerName: "Maro Itoje",
-        position: "Lock",
-        shirtNumber: 5,
-        isStarting: true,
-      },
-      {
-        lineupId: saracensLineup.id,
-        playerName: "Jamie George",
-        position: "Hooker",
-        shirtNumber: 2,
-        isStarting: true,
-      },
-    ]);
+          const [fixtureRow] = await tx
+            .insert(fixtures)
+            .values({
+              id: fixture.id,
+              seasonId: seasonRow.id,
+              round: fixture.round,
+              matchDay: fixture.matchDay,
+              stage: fixture.stage,
+              homeTeamId: homeTeam.id,
+              awayTeamId: awayTeam.id,
+              venue: fixture.venue,
+              referee: fixture.referee,
+              attendance: fixture.attendance,
+              kickoffAt: new Date(fixture.kickoffAt),
+              status: fixture.status,
+              homeScore: fixture.status === "completed" ? fixture.result?.homeScore ?? null : null,
+              awayScore: fixture.status === "completed" ? fixture.result?.awayScore ?? null : null,
+            })
+            .onConflictDoUpdate({
+              target: fixtures.id,
+              set: {
+                seasonId: seasonRow.id,
+                round: fixture.round,
+                matchDay: fixture.matchDay,
+                stage: fixture.stage,
+                homeTeamId: homeTeam.id,
+                awayTeamId: awayTeam.id,
+                venue: fixture.venue,
+                referee: fixture.referee,
+                attendance: fixture.attendance,
+                kickoffAt: new Date(fixture.kickoffAt),
+                status: fixture.status,
+                homeScore: fixture.status === "completed" ? fixture.result?.homeScore ?? null : null,
+                awayScore: fixture.status === "completed" ? fixture.result?.awayScore ?? null : null,
+                updatedAt: new Date(),
+              },
+            })
+            .returning();
 
-    await tx.insert(events).values([
-      {
-        fixtureId: fixtureOne.id,
-        teamId: teamsByCode.get("HAR")!.id,
-        playerName: "Marcus Smith",
-        eventType: "try",
-        minute: 15,
-        description: "Solo try after line break",
-      },
-      {
-        fixtureId: fixtureOne.id,
-        teamId: teamsByCode.get("SAR")!.id,
-        playerName: "Jamie George",
-        eventType: "try",
-        minute: 52,
-        description: "Driving maul over the line",
-      },
-    ]);
+          seededFixtures.push(fixtureRow);
 
-    await tx.insert(odds).values([
-      {
-        fixtureId: fixtureOne.id,
-        bookmaker: "DemoBook",
-        market: "1X2",
-        home: "1.85",
-        draw: "21.00",
-        away: "2.10",
-      },
-      {
-        fixtureId: fixtureTwo.id,
-        bookmaker: "DemoBook",
-        market: "1X2",
-        home: "2.05",
-        draw: "18.50",
-        away: "1.95",
-      },
-    ]);
+          if (fixture.odds?.length) {
+            await tx
+              .insert(odds)
+              .values(
+                fixture.odds.map((entry) => ({
+                  fixtureId: fixtureRow.id,
+                  bookmaker: entry.bookmaker,
+                  market: entry.market,
+                  home: entry.home,
+                  draw: entry.draw,
+                  away: entry.away,
+                  updatedAt: new Date(entry.updatedAt),
+                })),
+              )
+              .onConflictDoNothing();
+          }
 
-    await tx.insert(weather).values([
-      {
-        fixtureId: fixtureOne.id,
-        temperatureC: "14.5",
-        humidity: 72,
-        windSpeedKph: "12.3",
-        condition: "Partly cloudy",
-        recordedAt: new Date("2024-10-05T12:30:00Z"),
-      },
-      {
-        fixtureId: fixtureTwo.id,
-        temperatureC: "16.1",
-        humidity: 68,
-        windSpeedKph: "8.6",
-        condition: "Sunny",
-        recordedAt: new Date("2024-10-06T11:15:00Z"),
-      },
-    ]);
+          if (fixture.weather) {
+            await tx
+              .insert(weather)
+              .values({
+                fixtureId: fixtureRow.id,
+                temperatureC: fixture.weather.temperatureC,
+                humidity: fixture.weather.humidity,
+                windSpeedKph: fixture.weather.windSpeedKph,
+                condition: fixture.weather.condition,
+                recordedAt: new Date(fixture.weather.recordedAt),
+              })
+              .onConflictDoUpdate({
+                target: [weather.fixtureId],
+                set: {
+                  temperatureC: fixture.weather.temperatureC,
+                  humidity: fixture.weather.humidity,
+                  windSpeedKph: fixture.weather.windSpeedKph,
+                  condition: fixture.weather.condition,
+                  recordedAt: new Date(fixture.weather.recordedAt),
+                },
+              });
+          }
+
+          if (fixture.status === "completed" && fixture.result) {
+            await tx
+              .insert(boxscores)
+              .values([
+                {
+                  fixtureId: fixtureRow.id,
+                  teamId: homeTeam.id,
+                  stats: fixture.result.homeStats,
+                },
+                {
+                  fixtureId: fixtureRow.id,
+                  teamId: awayTeam.id,
+                  stats: fixture.result.awayStats,
+                },
+              ])
+              .onConflictDoUpdate({
+                target: [boxscores.fixtureId, boxscores.teamId],
+                set: {
+                  stats: sql`excluded.stats`,
+                  updatedAt: new Date(),
+                },
+              });
+          }
+        }
+      }
+    }
+
+    const highlightFixture = seededFixtures.find((fixture) => fixture.status === "completed");
 
     const [baselineModel] = await tx
       .insert(modelRegistry)
@@ -286,41 +261,93 @@ async function seed() {
         name: "baseline-xgboost",
         version: "1.0.0",
         description: "Gradient boosted baseline using match statistics",
-        trainingWindow: "2015-2024",
+        trainingWindow: "2019-2024",
         hyperparameters: {
-          max_depth: 6,
-          learning_rate: 0.05,
+          algorithm: "gbdt",
+          trees: 200,
+          learningRate: 0.05,
+          lambda: 1.0,
         },
         metrics: {
-          log_loss: 0.6732,
-          brier_score: 0.1821,
+          training: {
+            accuracy: 0.71,
+            brierScore: 0.176,
+            logLoss: 0.638,
+            roi: 6.2,
+            yield: 0.12,
+            hitRate: 64.5,
+            bets: 220,
+            sampleSize: 380,
+          },
+          backtest: {
+            accuracy: 0.67,
+            brierScore: 0.182,
+            logLoss: 0.654,
+            roi: 4.8,
+            yield: 0.08,
+            hitRate: 61.0,
+            bets: 90,
+            sampleSize: 120,
+          },
+          status: "staging",
+          trainedAt: "2024-06-20T12:00:00Z",
+        },
+      })
+      .onConflictDoUpdate({
+        target: [modelRegistry.name, modelRegistry.version],
+        set: {
+          description: "Gradient boosted baseline using match statistics",
+          trainingWindow: "2019-2024",
         },
       })
       .returning();
 
-    const [fixtureOnePrediction] = await tx
-      .insert(predictions)
-      .values({
-        fixtureId: fixtureOne.id,
-        modelId: baselineModel.id,
-        homeWinProbability: "0.55",
-        drawProbability: "0.08",
-        awayWinProbability: "0.37",
-        expectedHomeScore: "27.6",
-        expectedAwayScore: "23.4",
-        explanation: {
-          key_players: ["Marcus Smith", "Andre Esterhuizen"],
-          notes: "Positive impact of home advantage and attacking form",
-        },
-      })
-      .returning();
+    if (highlightFixture) {
+      const [predictionRow] = await tx
+        .insert(predictions)
+        .values({
+          fixtureId: highlightFixture.id,
+          modelId: baselineModel.id,
+          homeWinProbability: "0.56",
+          drawProbability: "0.08",
+          awayWinProbability: "0.36",
+          expectedHomeScore: "27.4",
+          expectedAwayScore: "23.1",
+          explanation: {
+            top_features: ["form_diff", "weather_severity", "implied_edge"],
+            notes: "Favorable momentum for the home side with superior phase play",
+          },
+        })
+        .onConflictDoUpdate({
+          target: [predictions.fixtureId, predictions.modelId],
+          set: {
+            homeWinProbability: "0.56",
+            drawProbability: "0.08",
+            awayWinProbability: "0.36",
+            expectedHomeScore: "27.4",
+            expectedAwayScore: "23.1",
+            explanation: {
+              top_features: ["form_diff", "weather_severity", "implied_edge"],
+              notes: "Favorable momentum for the home side with superior phase play",
+            },
+          },
+        })
+        .returning();
 
-    await tx.insert(validationFlags).values({
-      predictionId: fixtureOnePrediction.id,
-      level: "info",
-      reason: "Monitor late injuries to Harlequins backline",
-      resolved: false,
-    });
+      highlightPredictionId = predictionRow.id;
+
+      await tx.insert(validationFlags).values({
+        predictionId: predictionRow.id,
+        level: "info",
+        reason: "Monitor late injuries reported on matchday",
+        resolved: false,
+        source: "seed",
+        details: {
+          fixtureId: highlightFixture.id,
+          check: "lineup-integrity",
+        },
+      });
+    }
 
     const [seedUser] = await tx
       .insert(users)
@@ -339,19 +366,21 @@ async function seed() {
         .where(eq(users.username, "demo@rugbypredict.example"))
         .limit(1))[0];
 
-    if (demoUser) {
+    if (demoUser && highlightFixture) {
       await tx.insert(bets).values({
         userId: demoUser.id,
-        fixtureId: fixtureOne.id,
-        predictionId: fixtureOnePrediction.id,
+        fixtureId: highlightFixture.id,
+        predictionId: highlightPredictionId ?? null,
         betType: "match_winner",
-        selection: "Harlequins",
-        oddsTaken: "1.90",
-        stake: "25.00",
-        potentialPayout: "47.50",
+        selection: "Home",
+        oddsTaken: "1.85",
+        stake: "30.00",
+        potentialPayout: "55.50",
         status: "won",
-        settledAt: new Date("2024-10-05T17:00:00Z"),
-        notes: "Backed the home side after confirming starting lineup.",
+        settledAt: highlightFixture.kickoffAt
+          ? new Date(highlightFixture.kickoffAt.getTime() + 2 * 60 * 60 * 1000)
+          : new Date(),
+        notes: "Backed the Saints following confirmation of Ludlam starting at flanker.",
       });
     }
   });
@@ -359,7 +388,7 @@ async function seed() {
 
 seed()
   .then(() => {
-    console.log("Database seeded with demo Premiership season.");
+    console.log("Database seeded with historical Premiership and URC data.");
   })
   .catch((error) => {
     console.error("Failed to seed database", error);

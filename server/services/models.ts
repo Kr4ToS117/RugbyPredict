@@ -1,5 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
+import { getDb } from "../db/registry";
 import { modelRegistry, predictions } from "@shared/schema";
 import { trainModel, type TrainingJobConfig, type TrainingResult } from "../models/training";
 import { createTraceLogger, fixtureLogger } from "../logging";
@@ -212,7 +213,9 @@ export async function trainAndRegisterModel(options: RegisterModelOptions): Prom
 
   let summary: ModelSummary | null = null;
 
-  await db.transaction(async (tx) => {
+  const database = getDb();
+
+  await database.transaction(async (tx) => {
     const [modelRow] = await tx
       .insert(modelRegistry)
       .values({
