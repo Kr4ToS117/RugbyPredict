@@ -1,52 +1,54 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ValidationCard } from "@/components/validation-card";
-import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
-//todo: remove mock functionality
-const mockIssues = [
-  {
-    id: "val-001",
-    fixture: "Toulouse vs La Rochelle",
-    field: "Kick-off Time",
-    severity: "high" as const,
-    sources: [
-      { name: "Official API", value: "21:05 CET" },
-      { name: "Team Website", value: "21:00 CET" },
-    ],
-  },
-  {
-    id: "val-002",
-    fixture: "Leinster vs Munster",
-    field: "Venue Capacity",
-    severity: "medium" as const,
-    sources: [
-      { name: "Stadium DB", value: "51,700" },
-      { name: "Team Records", value: "51,900" },
-    ],
-  },
-  {
-    id: "val-003",
-    fixture: "Racing 92 vs Stade Français",
-    field: "Weather Forecast",
-    severity: "low" as const,
-    sources: [
-      { name: "Weather API", value: "Rain, 12°C" },
-      { name: "Local Service", value: "Light Rain, 13°C" },
-    ],
-  },
-];
+interface ValidationIssueResponse {
+  issues: Array<{
+    id: string;
+    fixture: string;
+    field: string;
+    severity: "high" | "medium" | "low";
+    sources: Array<{ name: string; value: string }>;
+  }>;
+}
 
 export default function Validation() {
-  const [issues, setIssues] = useState(mockIssues);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, isError } = useQuery<ValidationIssueResponse>({
+    queryKey: ["/api/validation/issues"],
+  });
+
+  const resolveMutation = useMutation({
+    mutationFn: async ({ id, source }: { id: string; source: string }) => {
+      await apiRequest("POST", "/api/validation/resolve", { id, source });
+    },
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["/api/validation/issues"] });
+      toast({
+        title: "Conflict resolved",
+        description: `Used data from ${variables.source}`,
+      });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Unexpected error";
+      toast({
+        title: "Unable to resolve issue",
+        description: message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const issues = data?.issues ?? [];
 
   const handleResolve = (issueId: string, chosenSource: string) => {
-    setIssues(issues.filter(i => i.id !== issueId));
-    toast({
-      title: "Conflict Resolved",
-      description: `Used data from ${chosenSource}`,
-    });
+    resolveMutation.mutate({ id: issueId, source: chosenSource });
   };
+
+  const isMutating = resolveMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -57,7 +59,21 @@ export default function Validation() {
         </p>
       </div>
 
-      {issues.length === 0 ? (
+      {isError ? (
+        <div className="text-center py-12">
+          <p className="text-destructive">Unable to load validation queue.</p>
+        </div>
+      ) : isLoading && issues.length === 0 ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {Array.from({ length: 2 }).map((_, idx) => (
+            <div key={idx} className="border rounded-lg p-6 animate-pulse space-y-3">
+              <div className="h-4 bg-muted rounded w-2/3" />
+              <div className="h-3 bg-muted rounded w-1/2" />
+              <div className="h-3 bg-muted rounded" />
+            </div>
+          ))}
+        </div>
+      ) : issues.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-muted-foreground">No pending validation issues</p>
         </div>
@@ -67,7 +83,7 @@ export default function Validation() {
             <ValidationCard
               key={issue.id}
               issue={issue}
-              onResolve={handleResolve}
+              onResolve={isMutating ? undefined : handleResolve}
             />
           ))}
         </div>

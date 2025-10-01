@@ -333,9 +333,9 @@ export const validationFlags = pgTable(
   "validation_flags",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-    predictionId: uuid("prediction_id")
-      .references(() => predictions.id, { onDelete: "cascade" })
-      .notNull(),
+    predictionId: uuid("prediction_id").references(() => predictions.id, {
+      onDelete: "cascade",
+    }),
     level: varchar("level", { length: 16 }).notNull(),
     reason: text("reason").notNull(),
     resolved: boolean("resolved").default(false).notNull(),
@@ -343,9 +343,39 @@ export const validationFlags = pgTable(
       .defaultNow()
       .notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    source: text("source"),
+    details: jsonb("details"),
   },
   (table) => ({
     predictionIdx: index("validation_flags_prediction_idx").on(table.predictionId),
+  }),
+);
+
+export const etlJobRuns = pgTable(
+  "etl_job_runs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    jobName: text("job_name").notNull(),
+    connectorName: text("connector_name").notNull(),
+    status: varchar("status", { length: 16 }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    recordsProcessed: integer("records_processed"),
+    successRate: numeric("success_rate", { precision: 5, scale: 2 }),
+    issues: integer("issues"),
+    metadata: jsonb("metadata"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    jobIdx: index("etl_job_runs_job_idx").on(table.jobName),
+    connectorIdx: index("etl_job_runs_connector_idx").on(table.connectorName),
+    startedIdx: index("etl_job_runs_started_idx").on(table.startedAt),
   }),
 );
 
@@ -541,3 +571,5 @@ export type Team = typeof teams.$inferSelect;
 export type Fixture = typeof fixtures.$inferSelect;
 export type Prediction = typeof predictions.$inferSelect;
 export type Bet = typeof bets.$inferSelect;
+export type ValidationFlag = typeof validationFlags.$inferSelect;
+export type EtlJobRun = typeof etlJobRuns.$inferSelect;

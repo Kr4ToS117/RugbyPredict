@@ -3,6 +3,8 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { db } from "./db";
 import { createUsersRepository } from "./services/users";
+import { createNotificationDispatcher } from "./notifications";
+import { startScheduler } from "./jobs/scheduler";
 
 const app = express();
 app.use(express.json());
@@ -40,6 +42,8 @@ app.use((req, res, next) => {
 
 (async () => {
   const usersRepository = createUsersRepository(db);
+  const notifier = createNotificationDispatcher();
+  const scheduler = startScheduler({ db, notifier });
   const server = await registerRoutes(app, { usersRepository });
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -74,4 +78,11 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  const handleShutdown = () => {
+    scheduler.stop();
+  };
+
+  process.on("SIGTERM", handleShutdown);
+  process.on("SIGINT", handleShutdown);
 })();
