@@ -1,5 +1,5 @@
 import { weather } from "@shared/schema";
-import type { ETLConnector, ConnectorLog } from "../types";
+import type { ETLConnector, ConnectorLog, ConnectorError } from "../types";
 import { toUtcDate } from "../utils";
 
 interface WeatherPayload {
@@ -11,75 +11,113 @@ interface WeatherPayload {
   condition: string;
 }
 
-const weatherPayload: WeatherPayload[] = [
-  {
-    fixtureId: "00000000-0000-0000-0000-00000000f101",
-    recordedAt: "2024-10-12T18:00:00Z",
-    temperatureC: 14.5,
-    humidity: 72,
-    windSpeedKph: 9.2,
-    condition: "Light Rain",
-  },
-  {
-    fixtureId: "00000000-0000-0000-0000-00000000f102",
-    recordedAt: "2024-10-13T14:00:00Z",
-    temperatureC: 16.8,
-    humidity: 65,
-    windSpeedKph: 11.4,
-    condition: "Cloudy",
-  },
-  {
-    fixtureId: "00000000-0000-0000-0000-00000000f201",
-    recordedAt: "2024-10-20T16:30:00Z",
-    temperatureC: 12.1,
-    humidity: 80,
-    windSpeedKph: 15.0,
-    condition: "Showers",
-  },
-];
+const WEATHER_API_BASE_URL = (process.env.WEATHER_API_URL ?? "https://weather.example.com")
+  .replace(/\/$/, "");
+
+async function fetchWeatherPayload(): Promise<WeatherPayload[]> {
+  const token = process.env.WEATHER_API_TOKEN;
+  if (!token) {
+    throw new Error("Missing WEATHER_API_TOKEN environment variable for weather_api connector");
+  }
+
+  const endpoint = `${WEATHER_API_BASE_URL}/snapshots`;
+  const response = await fetch(endpoint, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Weather API responded with ${response.status} ${response.statusText}: ${body ?? ""}`.trim(),
+    );
+  }
+
+  const data = (await response.json()) as WeatherPayload[] | { snapshots?: WeatherPayload[] };
+
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (data.snapshots) {
+    return data.snapshots;
+  }
+
+  return [];
+}
 
 export const weatherApiConnector: ETLConnector = {
   id: "weather_api",
   label: "Weather Provider",
   description: "Captures forecast snapshots for venue conditions.",
   async execute({ db }) {
+    const weatherPayload = await fetchWeatherPayload();
     const logs: ConnectorLog[] = [];
+    const errors: ConnectorError[] = [];
+
+    logs.push({
+      timestamp: new Date().toISOString(),
+      level: "INFO",
+      message: `Fetched ${weatherPayload.length} weather snapshots`,
+    });
+
+    let processed = 0;
 
     for (const payload of weatherPayload) {
-      const values: typeof weather.$inferInsert = {
-        fixtureId: payload.fixtureId,
-        recordedAt: toUtcDate(payload.recordedAt),
-        temperatureC: payload.temperatureC.toFixed(2),
-        humidity: payload.humidity,
-        windSpeedKph: payload.windSpeedKph.toFixed(2),
-        condition: payload.condition,
-      };
+      try {
+        const values: typeof weather.$inferInsert = {
+          fixtureId: payload.fixtureId,
+          recordedAt: toUtcDate(payload.recordedAt),
+          temperatureC: payload.temperatureC.toFixed(2),
+          humidity: payload.humidity,
+          windSpeedKph: payload.windSpeedKph.toFixed(2),
+          condition: payload.condition,
+        };
 
-      await db
-        .insert(weather)
-        .values(values)
-        .onConflictDoUpdate({
-          target: weather.fixtureId,
-          set: {
-            recordedAt: toUtcDate(payload.recordedAt),
-            temperatureC: payload.temperatureC.toFixed(2),
-            humidity: payload.humidity,
-            windSpeedKph: payload.windSpeedKph.toFixed(2),
-            condition: payload.condition,
-          },
+        await db
+          .insert(weather)
+          .values(values)
+          .onConflictDoUpdate({
+            target: weather.fixtureId,
+            set: {
+              recordedAt: toUtcDate(payload.recordedAt),
+              temperatureC: payload.temperatureC.toFixed(2),
+              humidity: payload.humidity,
+              windSpeedKph: payload.windSpeedKph.toFixed(2),
+              condition: payload.condition,
+            },
+          });
+
+        processed += 1;
+
+        logs.push({
+          timestamp: new Date().toISOString(),
+          level: "INFO",
+          message: `Weather snapshot stored for ${payload.fixtureId} :: ${payload.condition}`,
         });
-
-      logs.push({
-        timestamp: new Date().toISOString(),
-        level: "INFO",
-        message: `Weather snapshot stored for ${payload.fixtureId} :: ${payload.condition}`,
-      });
+      } catch (error) {
+        errors.push({
+          severity: "low",
+          message: error instanceof Error ? error.message : "Failed to upsert weather snapshot",
+          scope: payload.fixtureId,
+          context: { payload },
+        });
+      }
     }
 
+    const total = weatherPayload.length;
+    const successRate = total === 0 ? 100 : (processed / total) * 100;
+
     return {
-      recordsProcessed: weatherPayload.length,
-      successRate: 100,
+      recordsProcessed: processed,
+      successRate,
       logs,
+      errors,
+      metrics: {
+        fixturesCovered: new Set(weatherPayload.map((item) => item.fixtureId)).size,
+      },
     };
   },
 };

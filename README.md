@@ -68,9 +68,16 @@ Le serveur Express et le client Vite sont disponibles sur le port défini par la
    KELLY_FRACTION=0.5
    LOG_LEVEL=info
    LOG_PRETTY=true
+   RUGBY_API_URL=https://federations.example.com
+   RUGBY_API_TOKEN=changeme
+   ODDS_API_URL=https://bookmakers.example.com
+   ODDS_API_TOKEN=changeme
+   WEATHER_API_URL=https://weather.example.com
+   WEATHER_API_TOKEN=changeme
    ```
 
    Ces variables contrôlent les limites de risk-management du service bankroll ainsi que la verbosité des logs structurés.
+   Les paires `*_API_URL` et `*_API_TOKEN` sont requises pour effectuer les appels HTTP authentifiés des connecteurs ETL (fédérations, bookmakers, météo).
 
 2. **Installer les dépendances** : `npm install`.
 3. **Appliquer les migrations Drizzle** avec `npm run db:push` pour synchroniser le schéma.
@@ -93,6 +100,7 @@ Le runner Node ne génère pas de couverture automatiquement ; utilisez un outil
 - Les traces côté domaine sont accessibles en mémoire via les fonctions `getRecentTraces` / `getFixtureTraces` et exposées par deux endpoints :
   - `GET /api/observability/dashboard` → dernier état des connecteurs ETL, flags de validation, traces récentes.
   - `GET /api/observability/fixtures/:id` → timeline détaillée pour un fixture (bets, prédictions, flags, traces associées).
+- Chaque exécution de connecteur journalise désormais le volume synchronisé et remonte les métriques/erreurs dans `etl_job_runs.metadata` ainsi que les `validation_flags`. Les erreurs critiques (HTTP, mapping manquant, etc.) déclenchent automatiquement une notification d'escalade.
 - Pour investiguer un bug terrain :
   1. Interroger `/api/observability/dashboard` pour identifier les anomalies critiques.
   2. Récupérer les traces ciblées via `/api/observability/fixtures/{fixtureId}`.

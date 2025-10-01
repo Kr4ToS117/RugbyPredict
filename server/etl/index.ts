@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { etlJobRuns } from "@shared/schema";
 import type { NotificationDispatcher } from "../notifications";
 import type { Database, ETLConnector } from "./types";
-import { countHighSeverity, recordAnomalies } from "./utils";
+import { countHighSeverity, recordAnomalies, recordConnectorErrors } from "./utils";
 import { createTraceLogger, fixtureLogger } from "../logging";
 import { rugbyApiConnector } from "./connectors/rugbyApi";
 import { oddsApiConnector } from "./connectors/oddsApi";
@@ -50,6 +50,7 @@ export async function runConnector({ jobName, connector, db, notifier }: RunConn
     const duration = Date.now() - startTime;
 
     await recordAnomalies(db, result.anomalies);
+    await recordConnectorErrors(db, connector.id, result.errors);
 
     span.info("Connector completed", {
       connector: connector.id,
@@ -57,6 +58,7 @@ export async function runConnector({ jobName, connector, db, notifier }: RunConn
       durationMs: duration,
       recordsProcessed: result.recordsProcessed,
       successRate: result.successRate,
+      issues: (result.anomalies?.length ?? 0) + (result.errors?.length ?? 0),
     });
 
     if (result.anomalies?.length) {
@@ -75,10 +77,25 @@ export async function runConnector({ jobName, connector, db, notifier }: RunConn
       }
     }
 
-    if (countHighSeverity(result.anomalies) > 0) {
+    if (result.errors?.length) {
+      for (const error of result.errors) {
+        span.warn("Connector reported error", {
+          connector: connector.id,
+          jobName,
+          severity: error.severity,
+          message: error.message,
+          scope: error.scope,
+        });
+      }
+    }
+
+    const highSeverityIssues =
+      countHighSeverity(result.anomalies) + countHighSeverity(result.errors);
+
+    if (highSeverityIssues > 0) {
       await notifier.notifyEscalation({
-        title: `${connector.label} detected critical anomalies`,
-        body: `${result.anomalies?.length ?? 0} anomaly(ies) recorded during ${jobName}.`,
+        title: `${connector.label} detected critical issues`,
+        body: `${(result.anomalies?.length ?? 0) + (result.errors?.length ?? 0)} issue(s) recorded during ${jobName}.`,
         severity: "critical",
         context: {
           connectorId: connector.id,
@@ -95,9 +112,11 @@ export async function runConnector({ jobName, connector, db, notifier }: RunConn
         durationMs: duration,
         recordsProcessed: result.recordsProcessed,
         successRate: result.successRate.toFixed(2),
-        issues: result.anomalies?.length ?? 0,
+        issues: (result.anomalies?.length ?? 0) + (result.errors?.length ?? 0),
         metadata: {
           logs: result.logs ?? [],
+          metrics: result.metrics ?? {},
+          errors: result.errors ?? [],
         },
       })
       .where(eq(etlJobRuns.id, run.id));
