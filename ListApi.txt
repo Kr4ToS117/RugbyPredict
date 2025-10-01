@@ -1,0 +1,67 @@
+ListApi
+
+rugby_live_data
+
+Cible:
+Rapide
+Client:
+Session NSURL
+
+import Foundation
+
+let headers = [
+	"x-rapidapi-key": "ec7a1e26eamsh3d625cb84e27904p1fbe20jsn67d7814052ed",
+	"x-rapidapi-host": "rugby-live-data.p.rapidapi.com"
+]
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://rugby-live-data.p.rapidapi.com/fixtures-results-by-team/6167")! as URL,
+                                        cachePolicy: .useProtocolCachePolicy,
+                                    timeoutInterval: 10.0)
+request.httpMethod = "GET"
+request.allHTTPHeaderFields = headers
+
+let session = URLSession.shared
+let dataTask = session.dataTask(with: request as URLRequest, completionHandler: { (data, response, error) -> Void in
+	if (error != nil) {
+		print(error as Any)
+	} else {
+		let httpResponse = response as? HTTPURLResponse
+		print(httpResponse)
+	}
+})
+
+dataTask.resume()
+
+autres endpoints:
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://sportsradar-sportsbook-api.p.rapidapi.com/api/v1/sportsradar/events-catalogue?sportId=sr%3Asport%3A1&pageNo=1")! as URL,
+let request = NSMutableURLRequest(url: NSURL(string: "https://sportsradar-sportsbook-api.p.rapidapi.com/api/v1/sportsradar/inplay-events?pageNo=1&sportId=sr%3Asport%3A1")! as URL,
+let request = NSMutableURLRequest(url: NSURL(string: "https://sportsradar-sportsbook-api.p.rapidapi.com/api/v1/sportsradar/virtual-events?pageNo=1&sportId=sr%3Asport%3A21")! as URL,
+let request = NSMutableURLRequest(url: NSURL(string: "https://sportsradar-sportsbook-api.p.rapidapi.com/api/v1/sportsradar/upcoming-events?sportId=sr%3Asport%3A1&pageNo=1")! as URL,
+let request = NSMutableURLRequest(url: NSURL(string: "https://sportsradar-sportsbook-api.p.rapidapi.com/api/v1/sportsradar/scoreboard")! as URL,
+
+
+import Foundation
+
+let headers = [
+	"x-rapidapi-key": "ec7a1e26eamsh3d625cb84e27904p1fbe20jsn67d7814052ed",
+	"x-rapidapi-host": "sportsradar-sportsbook-api.p.rapidapi.com"
+]
+
+let request = NSMutableURLRequest(url: NSURL(string: "https://sportsradar-sportsbook-api.p.rapidapi.com/api/v1/sportsradar/scoreboard")! as URL,
+                                        cachePolicy: .useProtocolCachePolicy,
+                                    timeoutInterval: 10.0)
+request.httpMethod = "GET"
+request.allHTTPHeaderFields = headers
+
+let session = URLSession.shared
+let dataTask = session.dataTask(with: request as URLRequest, completionHandler: { (data, response, error) -> Void in
+	if (error != nil) {
+		print(error as Any)
+	} else {
+		let httpResponse = response as? HTTPURLResponse
+		print(httpResponse)
+	}
+})
+
+dataTask.resume()
