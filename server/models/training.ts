@@ -3,7 +3,7 @@ import { formatISO9075 } from "date-fns";
 import {
   fixtures,
 } from "@shared/schema";
-import { db } from "../db";
+import { getDb } from "../db/registry";
 import {
   buildTrainingDataset,
   computeFixtureFeatureVectorFromRecord,
@@ -827,7 +827,8 @@ export async function trainModel(config: TrainingJobConfig): Promise<TrainingRes
 
   const averages = computeAverageScores(trainingRows);
 
-  const upcomingFixtures = await db.query.fixtures.findMany({
+  const database = getDb();
+  const upcomingFixtures = await database.query.fixtures.findMany({
     where: (fixture, { or: orOp, gte: gteOp, eq: eqOp }) =>
       orOp(eqOp(fixture.status, "scheduled"), gteOp(fixture.kickoffAt, new Date())),
     with: {

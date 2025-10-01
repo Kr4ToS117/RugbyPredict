@@ -11,6 +11,7 @@ import {
   boxscores,
 } from "@shared/schema";
 import { db } from "../db";
+import { OFFICIAL_RESULTS } from "../data/sampleSeasons";
 import { listFiles, saveFile, type StoredFile } from "../storage";
 
 export interface ResultPayload {
@@ -176,34 +177,29 @@ export async function runResultsPullJob(): Promise<{ updated: number }> {
     return { updated: 0 };
   }
 
-  const dataset: ResultPayload[] = candidates.map((fixture) => {
-    const baseScore = Math.max(10, Math.floor((fixture.kickoffAt?.getUTCHours() ?? 12) * 1.2));
-    const homeScore = fixture.homeScore ?? baseScore;
-    const awayScore = fixture.awayScore ?? baseScore - 3;
+  const officialResults: ResultPayload[] = candidates
+    .map((fixture) => {
+      const official = OFFICIAL_RESULTS[fixture.id];
+      if (!official) {
+        return null;
+      }
 
-    const homeStats = {
-      possession: 52 + ((fixture.homeTeam?.name?.length ?? 5) % 8),
-      meters: 320 + ((fixture.homeTeam?.name?.charCodeAt(0) ?? 70) % 50),
-      tackles: 120 + ((fixture.homeTeam?.name?.charCodeAt(1) ?? 50) % 30),
-    } satisfies Record<string, number>;
+      return {
+        fixtureId: fixture.id,
+        homeScore: official.homeScore,
+        awayScore: official.awayScore,
+        status: official.status ?? "completed",
+        homeStats: official.homeStats,
+        awayStats: official.awayStats,
+      } satisfies ResultPayload;
+    })
+    .filter((value): value is ResultPayload => value !== null);
 
-    const awayStats = {
-      possession: 48 - ((fixture.awayTeam?.name?.length ?? 5) % 8),
-      meters: 280 + ((fixture.awayTeam?.name?.charCodeAt(0) ?? 65) % 40),
-      tackles: 135 + ((fixture.awayTeam?.name?.charCodeAt(1) ?? 40) % 25),
-    } satisfies Record<string, number>;
+  if (!officialResults.length) {
+    return { updated: 0 };
+  }
 
-    return {
-      fixtureId: fixture.id,
-      homeScore,
-      awayScore,
-      status: "completed",
-      homeStats,
-      awayStats,
-    } satisfies ResultPayload;
-  });
-
-  return await importResultsBatch(dataset);
+  return await importResultsBatch(officialResults);
 }
 
 export function parseResultsCsv(csv: string): ResultPayload[] {

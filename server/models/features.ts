@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, lt, lte, or } from "drizzle-orm";
 import { differenceInHours } from "date-fns";
 import { fixtures, odds, weather as weatherTable } from "@shared/schema";
-import { db } from "../db";
+import { getDb } from "../db/registry";
 import { fixtureLogger } from "../logging";
 
 export const FEATURE_KEYS = [
@@ -126,7 +126,8 @@ async function getRecentFixtures(
   before: Date,
   limit: number,
 ): Promise<FixtureRecord[]> {
-  return await db.query.fixtures.findMany({
+  const database = getDb();
+  return await database.query.fixtures.findMany({
     where: (fixture, { and: andOp, lt: ltOp, or: orOp, eq: eqOp }) =>
       andOp(
         ltOp(fixture.kickoffAt, before),
@@ -262,7 +263,8 @@ function computeWeatherSeverity(weather: WeatherRecord | null): number {
 async function computeHeadToHead(
   fixture: FixtureRecord,
 ): Promise<{ homeWinRate: number; awayWinRate: number; diff: number }> {
-  const rows = await db.query.fixtures.findMany({
+  const database = getDb();
+  const rows = await database.query.fixtures.findMany({
     where: (row, { and: andOp, or: orOp, eq: eqOp, lt: ltOp }) =>
       andOp(
         ltOp(row.kickoffAt, fixture.kickoffAt),
@@ -355,7 +357,8 @@ function selectLatestMarketOdds(context: FixtureWithContext): {
 }
 
 async function hydrateFixture(fixtureId: string): Promise<FixtureWithContext | null> {
-  const row = await db.query.fixtures.findFirst({
+  const database = getDb();
+  const row = await database.query.fixtures.findFirst({
     where: eq(fixtures.id, fixtureId),
     with: {
       odds: true,
@@ -503,7 +506,8 @@ export async function buildTrainingDataset(options: {
   endDate?: Date;
   limit?: number;
 } = {}): Promise<TrainingDataset> {
-  const rows = await db.query.fixtures.findMany({
+  const database = getDb();
+  const rows = await database.query.fixtures.findMany({
     where: (fixture, { and: andOp, gte: gteOp, lte: lteOp, eq: eqOp }) => {
       const predicates = [eqOp(fixture.status, "completed")];
 
